@@ -1,0 +1,335 @@
+---
+title: "Ames House Price Prediction"
+author: "Ahmet Buyuknahirci, Anh Hoang, Tyler Brosius, Timothy Fasoldt"
+output: word_document
+---
+
+**Abstract
+In this project, we use “Amex House Prices Dataset” in Kaggle to examine the sale prices and factors describing different aspect of residential houses located in Ames, Iowa. Our purpose is to see how these factors affect the sale prices, thus giving house buyers in Ames beneficial information on estimating their dream houses’ prices.  
+
+**Dataset Description
+This datasets includes four separate files:
+Train.csv: The training test
+Test.csv: The test set
+Data_description.txt: Description of each column
+Sample_submission.csv: A benchmark submission from a linear regression on year and month of sale, lot square footage, and number of bedrooms
+
+**Summary of Finding
+1. Single Linear Regression: OverallQuality has a strong positive correlation to the sale price. For each point increased in quality, the sale price will increase $45,436.
+2. Mutiple Linear Regression: OverallQuality, LotArea, GrLivArea, GarageArea, YearRemodAdd to SalePrice. 
+  * For each overall quality added, the sale price will increase $25,237.02
+  * For each lotArea added, the sale price will increase $0.25
+  * For each above ground living area sqft added, the sale price will increase $63.87
+  * For each garage area sqft added, the sale price will increase $63.87
+  * For each year remodel added, the sale price will increase $428.18 
+3. 
+
+
+**Set up and clean database
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(Amelia) #Check for NA in dataframe
+library(skimr) #Check for specifications
+library(Metrics)
+library(rpart)
+library(rpart.plot)
+library(Hmisc)
+library(caret)
+```
+
+```{r database, echo=FALSE}
+housePrice <- read.csv("train.csv")
+houseTest <- read.csv("test.csv")
+```
+
+```{r explore, echo=FALSE}
+#Overview of the dataset
+glimpse(housePrice)
+glimpse(houseTest)
+#Shouw numeric columns
+colnames(!select_if(housePrice, is.numeric))
+colnames(!select_if(houseTest, is.numeric))
+#Show character columns
+colnames(select_if(housePrice, is.character))
+colnames(select_if(houseTest, is.character))
+length(select_if(housePrice, is.character))
+length(select_if(houseTest, is.character))
+```
+** There are a total of 1460 observations with 81 columns
+43 columns are character, and 38 are numeric
+
+```{r clean_data}
+#Overview of NA in the list with missingmap
+missmap(housePrice, col=c('yellow','black'),y.at=1,y.labels='',legend=TRUE)
+missmap(houseTest, col=c('yellow','black'),y.at=1,y.labels='',legend=TRUE)
+##Total NA in each columns, store in an array
+na_count <- colSums(is.na(housePrice))
+na_count1 <- colSums(is.na(houseTest))
+#Check for the huge missing value
+head(sort(na_count, decreasing = TRUE), 20)
+head(sort(na_count1, decreasing = TRUE), 20)
+#Remove all the huge missing value columns & ID Column
+housePriceClean <- subset (housePrice, select = -c(PoolQC, MiscFeature, Alley, Fence, FireplaceQu, Id))
+houseTestClean <- subset (houseTest, select = -c(PoolQC, MiscFeature, Alley, Fence, FireplaceQu, Id))
+#Convert some numeric columns to factors
+housePriceClean$MSSubClass <- as.factor(housePriceClean$MSSubClass)
+#Replace numeric NA value with 0
+numeric_cols <- names(housePriceClean[,sapply(housePriceClean,function(x) {is.numeric(x)})])
+housePriceClean[,numeric_cols] <- sapply(housePriceClean[,numeric_cols],function(x){ ifelse(is.na(x),0,x)})
+#Replace character NA value with not_app
+char_cols <- names(housePriceClean[,sapply(housePriceClean,function(x) {is.character(x)})]) # Names of all character columns
+housePriceClean[,char_cols] <- sapply(housePriceClean[,char_cols],function(x){ ifelse(is.na(x),"not_app",x)})
+#Recheck to see NA value
+missmap(housePriceClean, col=c('yellow','black'),y.at=1,y.labels='',legend=TRUE)
+missmap(houseTestClean, col=c('yellow','black'),y.at=1,y.labels='',legend=TRUE)
+#check outlier
+#set lower bound to the bottom 1%
+lower_bound <- quantile(housePriceClean$SalePrice, 0.01)
+lower_bound
+#set upper bound to top 99%
+upper_bound <- quantile(housePriceClean$SalePrice, 0.99)
+upper_bound
+#find the outliers
+outlier_ind <- which(housePriceClean$SalePrice < lower_bound | housePriceClean$SalePrice > upper_bound)
+outlier_ind
+#Graph to see difference of dataset before/after the training
+options(scipen = 4)
+train_data <- housePriceClean %>% filter(!row_number() %in% outlier_ind)
+ggplot(housePriceClean, aes(x=SalePrice)) + geom_histogram(color = "black", fill = "white")
+ggplot(train_data, aes(x=SalePrice)) + geom_histogram(color = "black", fill = "white")
+
+
+```
+** In this part, our observations are:
+  * Identify NA values using missing map and na_count. We remove column PoolQC, MiscFeature, Alley, Fence and FireplaceQu because most values in these columns are NA. We also remove ID column for a better analysis.
+  * There are outliers in this model. We identify them using outlier method and boxplot. When we try to remove the outliers to train the model, our predictions would be exaggerated (higher error) because of the larger slope. The higher the sale price, the more we are far away from the predictions.
+  * Therefore, we will continue with the original data.
+  * Sale Price is currently skewed left. We will use log transformation to have a better prediction.   
+
+
+```{r Single_Linear_Regression_OverallQualityvsSalePrices}
+#The median house price is $163,000
+summary(housePriceClean$SalePrice) 
+
+#Check to see the coefficient between 2 variables
+cor(housePriceClean$OverallQual, housePriceClean$SalePrice)
+model <- lm(housePriceClean$SalePrice ~ housePriceClean$OverallQual)
+modelNoOutlier <- lm(train_data$SalePrice ~ train_data$OverallQual) 
+summary(model)
+summary(modelNoOutlier)
+
+#We notice that the overall quality can predict the price. The higher the overall quality, the higher the price
+ggplot(housePriceClean, aes(x = OverallQual, y = SalePrice)) + geom_jitter() + stat_smooth(method = 'lm')
+ggplot(train_data, aes(x = OverallQual, y = SalePrice)) + geom_jitter() + stat_smooth(method = 'lm')
+
+sigma(model)/mean(housePriceClean$SalePrice)
+predictions <- model %>% predict(housePriceClean)
+RMSE <- rmse(predictions, housePriceClean$SalePrice)
+R2 <- cor(housePriceClean$SalePrice, predictions)^2
+R2
+RMSE/mean(housePriceClean$SalePrice)
+
+```
+** Summary of Model 1: Simple Linear Regression
+Dependent variable: Sale Price, Independent variable: Overall Quality point.
+Result: 
+  * p-value is highly significant (<2e-16)
+  * R^2 = 0.62. 62% data is explained, indicating that overall quality score is a good predictor for Sale Price.
+  * RSME is approximately 0.26, showing that their is a residual error of 26%
+  * Sale Prices = -96,206 + 45,434 * Overall Quality
+  
+
+```{r Multiple_Linear_Regression_OverallQualvsSalePrice}
+model1 <- lm(SalePrice ~ OverallQual + LotArea + GrLivArea + GarageArea + YearRemodAdd, data = housePriceClean)
+summary(model1)
+modelNoOutlier2 <- lm(SalePrice ~ OverallQual + LotArea + GrLivArea + GarageArea + YearRemodAdd, data = train_data)
+summary(modelNoOutlier2)
+sigma(model1)/mean(housePriceClean$SalePrice)
+sigma(modelNoOutlier2)/mean(train_data$SalePrice)
+
+```
+** Summary of Model 2: Multiple Linear Regression
+Dependent variable: Sale Price, Independent variable: Overall Quality, LotArea, GrLivArea, GarageArea, YearRemodAdd
+Result: 
+  * p-value is highly significant for all elements
+  * R^2 = 0.75. 75% data is explained, indicating that these factors are good predictors for Sale Price.
+  * RSME is approximately 0.21, showing that their is a residual error of 21%, which is acceptable
+  * SalePrice = -932387.90 + 25237.82(OverallQual) + 0.25(LotArea) + 46.59(GrLivArea) + 63.87(GarageArea) + 428.18(YearRemodAdd)
+
+```{r Logistic_Regression_WithOutlier}
+#Get dataset, set average
+housePriceCleanFactors <- housePriceClean
+housePriceCleanFactorsN <- as.data.frame(unclass(housePriceCleanFactors), stringsAsFactors = TRUE)
+housePriceCleanFactorF <- as.data.frame(unclass(housePriceCleanFactors), stringsAsFactors = TRUE)
+average = mean(housePriceCleanFactorsN$SalePrice)
+#Separate numeric & factor, test correlation
+factor_cols <- names(housePriceClean[,sapply(housePriceCleanFactorF,function(x) {is.factor(x)})])
+housePriceCleanFactorsN <- housePriceCleanFactorsN[ , numeric_cols]
+housePriceCleanFactorF <- housePriceCleanFactorF[ , factor_cols]
+#Categorized sale price to below/above average
+logistic_data = ifelse(housePriceCleanFactorsN$SalePrice<=average, "Below", "Above")
+logistic_data <- as.factor(logistic_data)
+#Add logistic_data to the table
+housePriceCleanFactorsN = data.frame(housePriceCleanFactorsN, logistic_data)
+housePriceCleanFactorsN$SalePrice <- NULL
+housePriceCleanFactorF = data.frame(housePriceCleanFactorF, logistic_data)
+
+#Split the data into training and test
+set.seed(1460)
+training.samples <- housePriceCleanFactorsN$logistic_data %>% createDataPartition(p = 0.8, list= FALSE)
+train.data <- housePriceCleanFactorsN[training.samples, ]
+test.data <- housePriceCleanFactorsN[-training.samples, ]
+
+set.seed(1460)
+training.samples1 <- housePriceCleanFactorF$logistic_data %>% createDataPartition(p = 0.8, list= FALSE)
+train.data1 <- housePriceCleanFactorF[training.samples, ]
+test.data1 <- housePriceCleanFactorF[-training.samples, ]
+
+#Fit the model
+modelL <- glm(logistic_data ~ ., data = train.data, family = binomial)
+summary(modelL)
+
+modelL1 <- glm(logistic_data ~ MSSubClass + Street + LotShape + LandContour + LotConfig + LandSlope + Neighborhood + BldgType + HouseStyle + RoofStyle + Exterior1st + Foundation + BsmtCond + Heating + HeatingQC + CentralAir + KitchenQual + GarageFinish + SaleType + SaleCondition, data = train.data1, family = binomial)
+summary(modelL1)
+
+#Choose related factors
+modelL.reduced <- glm(logistic_data ~ LotArea + OverallQual + OverallCond + YearBuilt + YearRemodAdd + BsmtFinSF1 + BsmtFinSF2 + BsmtUnfSF + X1stFlrSF +  X2ndFlrSF + BsmtFullBath, data = train.data, family = binomial)
+
+modelL1.reduced <- glm(logistic_data ~ MSSubClass + LotConfig + LandSlope + Neighborhood + CentralAir + KitchenQual + GarageFinish, data = train.data1, family = binomial)
+
+#Summarize the final model
+summary(modelL.reduced)
+summary(modelL1.reduced)
+
+#Find regression coefficient
+matrix_coef <- summary(modelL.reduced)$coef
+my_estimate <- matrix_coef[ , 1]
+exp(my_estimate)
+
+#Make predictions
+probabilities <- modelL.reduced %>% predict(test.data, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, "Below", "Above")
+
+probabilities1 <- modelL1.reduced %>% predict(test.data1, type = "response")
+predicted.classes1 <- ifelse(probabilities1 > 0.5, "Below", "Above")
+
+#Model accuracy
+mean(predicted.classes == test.data$logistic_data)
+mean(predicted.classes1 == test.data1$logistic_data)
+
+#Check model info
+trCnt1 <- trainControl(method = "CV",number = 5)
+glmmodel <- train(logistic_data ~ LotArea + OverallQual + OverallCond + YearBuilt + YearRemodAdd + BsmtFinSF1 + BsmtFinSF2 + BsmtUnfSF + X1stFlrSF +  X2ndFlrSF + BsmtFullBath, data = train.data, method = "glm", family = binomial)
+summary(glmmodel)
+
+glmmodel1 <- train(logistic_data ~ MSSubClass + LotConfig + LandSlope + Neighborhood + CentralAir + KitchenQual + GarageFinish, data = train.data1, method = "glm", family = binomial)
+summary(glmmodel1)
+
+#Generate predictions on hold-back data
+train.predicted <- predict(glmmodel, test.data)
+confusionMatrix(train.predicted, reference=test.data$logistic_data, positive = "Below")
+train.predicted1 <- predict(glmmodel1, test.data1)
+confusionMatrix(train.predicted1, reference=test.data1$logistic_data, positive = "Below")
+
+
+
+```
+** Numerical Independent Factors to identify below average house price
+
+  *The more square feet of first floor, second floor, basement and lot 
+  *The higher socre of overall quality and condition
+  *The newer year build and year remodel
+  *The more bathroom the basement has
+  => The less chance the house price is below average.
+
+The classification prediction accuracy is about 92%, which is good. The misclassification error rate is 24%.
+  * 103 above average house price are predicted correctly (True Negative)
+  * 15 above average house price are predicted as below average price (False Positive)
+  * 165 below average house price are predicted correctly (True Positive)
+  * 9 below average house price are predicted as above average price (False Negative)
+  * Sensitivity: 91.67% of below average house price are correctly classified
+    Specificity: 91.96% of above average house price are correctly classified
+
+
+```{r DecisionTree}
+#convert char elements to factors
+housePriceCleanFactors <- housePriceClean
+housePriceCleanFactors <- as.data.frame(unclass(housePriceCleanFactors), stringsAsFactors = TRUE)
+#Change sale price to a binary variable, representing data as above or below average sale price
+average = mean(housePriceCleanFactors$SalePrice)
+High = ifelse(housePriceCleanFactors$SalePrice<=average, "Below Average", "Above Average")
+housePriceCleanFactors = data.frame(housePriceCleanFactors, High)
+#remove SalePrice column as it is replaced with High, and set up decision tree
+fit <- rpart(High~.-SalePrice, data = housePriceCleanFactors, method = 'class')
+#plot the tree
+rpart.plot(fit, extra = "auto")
+#predict which houses will sell above and below average
+predict_unseen <-predict(fit, housePriceCleanFactors, type = 'class')
+#make table to show prediction data
+table_mat <-table(housePriceCleanFactors$High, predict_unseen)
+table_mat
+```
+
+** Overall, the odds of the Sale Price of a house being below average ($180,912.20) is 62%)
+  *The Overall Quality of the house has a major impact on the sale price of a house, where houses with a quality of at least 7 have only a 19% chance of selling below the average, while the houses rated below 7 have an 88% chance.
+  *The TotalBsmtSF (total basement square feet) have a considerable effect on the sale price of houses who’s quality was above or equal to 7. Of those houses, if their total basement square feet is at least 766, they only have a 12% chance of selling below average, while the houses who have less than 766 sq ft had a 74% chance of selling below average
+  *If the GrLivArea (Above Grade Living area) is less than 1566 square feet, the odds of a house selling at a below average price shoot up, at around 97%
+  *This table shows that the model was able to correctly predict 1309 outcomes (498 true negative, 811 true positive), and incorrectly predict 151 outcomes (62 false positives, 89 false negatives). This means the model predicted correctly around 88.5% of the time.
+  
+```{r Random Forest}
+#train
+train_set<-housePriceCleanFactors[1:1460,]
+train_set2 <- cbind(train_set, High)
+train_set2 <- train_set2[-1]
+#test
+test_set2 <- housePriceClean[1461:2919,]
+test_set2<-test_set2[-1]
+
+#Random Forest Data, set tree to 400 
+rf <- randomForest(SalePrice ~ ., data = train_set2, ntree = 400, na.action=na.exclude,proximity = T, importance = T, do.trace = TRUE)
+#Plot the Random Tree above
+varImpPlot(rf)
+#Make a subset with the 10 top correlated variables to SalePrice from the "rf" Random Forest
+rfdata <- subset(train_set2, select = c("OverallQual", "GrLivArea", "GarageCars", 
+                                        "TotalBsmtSF", "ExterQual", "BsmtQual", "X1stFlrSF",
+                                        "YearBuilt", "GarageArea", "X2ndFlrSF", "FullBath"))
+#Do a another Random Tree with the 10 most relevant variables from the "rf" Random Forest
+rf2 <- randomForest(SalePrice ~ ., data = rfdata, ntree = 400, proximity = T, importance = T, 
+                    na.action=na.exclude)
+#Plot the "rf2" Random Forest
+varImpPlot(rf2)
+
+#Create a csv file containing the predicted Sale Prices
+SalePrice <- predict(rf, newdata = test_set2) 
+id <- houseTest$Id
+to_csv <- housePriceClean.frame(id, SalePrice)
+write_csv(to_csv, 'r_decision_tree_regression.csv')
+
+#Do an accuracy test to determine the accuracy of the Random Forest
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+accuracy_tune <- function(rf) {
+  predict_unseen <- predict(rf, train_set2, type = 'class')
+  table_mat <- table(train_set2$High, predict_unseen)
+  accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+  accuracy_Test
+}
+accuracy_Test
+control <- rpart.control(minsplit = 4, minbucket = round(5/3),
+                         maxdepth = 3, cp = 0)
+tune_fit <- rpart(High~.-SalePrice, data = train_set2,
+                  method = 'class', control = control)
+accuracy_tune(tune_fit)          
+```
+
+** Accuracy of 90% is calculated from the Random Forest, and with the 89% from the Decision Tree we can conclude that the predicted values are pretty much accurate
+  *GrLivArea had the greatest %IncMSE with over 30%, and OverallQual with over 20% making both these variables have over 50% of accuracy of what determines that sale price.
+  *OverallQual had a major greater value of IncNodePurity  compared to the other variables showing us that it has the greatest importance to sale price based on the Gini Impurity Index.
+
+  
+  
