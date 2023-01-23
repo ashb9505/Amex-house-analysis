@@ -14,16 +14,6 @@ Test.csv: The test set
 Data_description.txt: Description of each column
 Sample_submission.csv: A benchmark submission from a linear regression on year and month of sale, lot square footage, and number of bedrooms
 
-**Summary of Finding
-1. Single Linear Regression: OverallQuality has a strong positive correlation to the sale price. For each point increased in quality, the sale price will increase $45,436.
-2. Mutiple Linear Regression: OverallQuality, LotArea, GrLivArea, GarageArea, YearRemodAdd to SalePrice. 
-  * For each overall quality added, the sale price will increase $25,237.02
-  * For each lotArea added, the sale price will increase $0.25
-  * For each above ground living area sqft added, the sale price will increase $63.87
-  * For each garage area sqft added, the sale price will increase $63.87
-  * For each year remodel added, the sale price will increase $428.18 
-3. 
-
 
 **Set up and clean database
 ```{r setup, include=FALSE}
